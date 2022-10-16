@@ -4,7 +4,7 @@ use super::transaction::{
     TransactionType, 
     TransactionState
 };
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::collections::HashMap;
 
 
@@ -136,13 +136,15 @@ impl Proccessor {
     }
 
 
-    // // only used in tests
-    // pub async fn get_client_account(
-    //     &self, 
-    //     client: u16,
-    //     accounts_map: &HashMap<u16, ClientAccount>
-    // ) -> &ClientAccount {
-    //     accounts_map.get(&client).unwrap()   
-    // }
+    // only used in tests
+    pub async fn get_client_account(
+        &self, 
+        client: u16,
+        accounts_map: Arc<Mutex<HashMap<u16, ClientAccount>>>
+    ) -> ClientAccount {
+        let accounts_map = accounts_map.try_lock().unwrap();
+        let value = accounts_map.get(&client).unwrap();
+        *value
+    }
 
 }
