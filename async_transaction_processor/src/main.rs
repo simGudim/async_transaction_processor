@@ -32,6 +32,7 @@ use std::process;
 use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
 
+
 // returns the positional argument sent to this process. 
 // If there are no positional arguments, then this returns an error.
 fn get_numbered_arg(pos: usize) -> Result<OsString, Box<dyn Error>> {
@@ -42,8 +43,8 @@ fn get_numbered_arg(pos: usize) -> Result<OsString, Box<dyn Error>> {
 }
 
 async fn process_transactions(
-    account_map: Arc<Mutex<HashMap<u16, ClientAccount>>>,
-    transaction_map: Arc<Mutex<HashMap<u32, TransactionState>>>
+    account_map: Arc<Vec<Mutex<HashMap<u16, ClientAccount>>>>,
+    transaction_map: Arc<Vec<Mutex<HashMap<u32, TransactionState>>>>
 ) -> Result<(), Box<dyn Error>> {
     // get the input file path 
     let input_file_path = get_numbered_arg(1)?;
@@ -70,10 +71,12 @@ async fn process_transactions(
 
     // output to stdout
     let mut wtr = Writer::from_writer(io::stdout());
-    let accounts_map = account_map.lock().unwrap();
-    accounts_map
-        .iter()
-        .try_for_each(|(_, account)| wtr.serialize(account))?;
+    for i in account_map.iter() {
+        let accounts_map = i.lock().unwrap();
+        accounts_map
+            .iter()
+            .try_for_each(|(_, account)| wtr.serialize(account))?;
+    }
 
     wtr.flush()?;
     Ok(())
@@ -82,8 +85,8 @@ async fn process_transactions(
 
 #[tokio::main]
 async fn main() {
-    let account_map = Arc::new(Mutex::new(HashMap::new()));
-    let transaction_map = Arc::new(Mutex::new(HashMap::new()));
+    let account_map: Arc<Vec<Mutex<HashMap<u16, ClientAccount>>>>  = Proccessor::new_sharded_db(3);
+    let transaction_map: Arc<Vec<Mutex<HashMap<u32, TransactionState>>>>  = Proccessor::new_sharded_db(3);
     let handle = tokio::spawn(async move  {
         let account_map = account_map.clone();
         let transaction_map = transaction_map.clone();

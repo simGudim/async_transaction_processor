@@ -4,8 +4,11 @@ use super::transaction::{
     TransactionType, 
     TransactionState
 };
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::Hasher;
+use std::hash::Hash;
 
 
 pub struct Proccessor();
@@ -16,11 +19,20 @@ impl Proccessor {
         Self{}
     }
 
+    // create a sharded db
+    pub fn new_sharded_db<T, V>(num_shards: usize) -> Arc<Vec<Mutex<HashMap<T, V>>>> {
+        let mut db = Vec::with_capacity(num_shards);
+        for _ in 0..num_shards {
+            db.push(Mutex::new(HashMap::new()));
+        }
+        Arc::new(db)
+    }
+
     // inserts transaction history for deposits and withdrawls
     async fn insert_transaction_history(
         &mut self, 
         transaction: &Transaction,
-        transactions_map: Arc<Mutex<HashMap<u32, TransactionState>>>
+        transactions_map: &Mutex<HashMap<u32, TransactionState>>
     ) {
         let mut transactions_map = transactions_map.lock().unwrap();
         transactions_map
@@ -48,7 +60,7 @@ impl Proccessor {
     async fn insert_deposit_transaction_into_account(
         &mut self, 
         transaction: &Transaction,
-        accounts_map: Arc<Mutex<HashMap<u16, ClientAccount>>>
+        accounts_map: &Mutex<HashMap<u16, ClientAccount>>
     ) {
         let amount = self.check_valid_amount(transaction.amount);
         let mut accounts_map = accounts_map.lock().unwrap();
@@ -68,7 +80,7 @@ impl Proccessor {
     async fn insert_withdrawl_transaction_into_account(
         &mut self, 
         transaction: &Transaction,
-        accounts_map: Arc<Mutex<HashMap<u16, ClientAccount>>>
+        accounts_map: &Mutex<HashMap<u16, ClientAccount>>
     ) {
         let amount = self.check_valid_amount(transaction.amount);
         let mut accounts_map = accounts_map.lock().unwrap();
@@ -86,8 +98,8 @@ impl Proccessor {
     async fn handle_dipsute_transactions(
         &mut self, 
         transaction: &Transaction,
-        accounts_map: Arc<Mutex<HashMap<u16, ClientAccount>>>,
-        transactions_map: Arc<Mutex<HashMap<u32, TransactionState>>>
+        accounts_map: &Mutex<HashMap<u16, ClientAccount>>,
+        transactions_map: &Mutex<HashMap<u32, TransactionState>>
     ) {
         let mut accounts_map = accounts_map.lock().unwrap();
         let mut transactions_map = transactions_map.lock().unwrap();
@@ -119,19 +131,24 @@ impl Proccessor {
     pub async fn process_transaction(
         &mut self,
         transaction: Transaction,
-        accounts_map: Arc<Mutex<HashMap<u16, ClientAccount>>>,
-        transactions_map: Arc<Mutex<HashMap<u32, TransactionState>>>
+        accounts_map: Arc<Vec<Mutex<HashMap<u16, ClientAccount>>>>,
+        transactions_map: Arc<Vec<Mutex<HashMap<u32, TransactionState>>>>
     ) {
+        let mut hasher = DefaultHasher::new();
+        let key = transaction.client;
+        key.hash(&mut hasher);
+        let db_transcation_shard = &transactions_map[(hasher.finish() % transactions_map.len() as u64) as usize];
+        let db_account_shard = &accounts_map[(hasher.finish() % accounts_map.len() as u64) as usize];
         match transaction.transaction_type {
             TransactionType::Deposit => {
-                self.insert_transaction_history(&transaction, transactions_map).await;
-                self.insert_deposit_transaction_into_account(&transaction, accounts_map).await;
+                self.insert_transaction_history(&transaction, db_transcation_shard).await;
+                self.insert_deposit_transaction_into_account(&transaction, db_account_shard).await;
             },
             TransactionType::Withdrawal => {
-                self.insert_transaction_history(&transaction, transactions_map).await;
-                self.insert_withdrawl_transaction_into_account(&transaction, accounts_map).await;
+                self.insert_transaction_history(&transaction, db_transcation_shard).await;
+                self.insert_withdrawl_transaction_into_account(&transaction, db_account_shard).await;
             },
-            _  => self.handle_dipsute_transactions(&transaction, accounts_map, transactions_map).await
+            _  => self.handle_dipsute_transactions(&transaction, db_account_shard, db_transcation_shard).await
         }
     }
 
